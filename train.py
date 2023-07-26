@@ -3,6 +3,7 @@ import tqdm
 import wandb
 import numpy as np
 import torch
+import pickle
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -29,7 +30,6 @@ def main():
     ### training
 
     # load training data
-
     phases = ["train"] if args.eval == 0 else ["valid"]
     # phases = ["train"]
     if args.env in ["LatteArt", "Pouring"]:
@@ -110,7 +110,7 @@ def main():
 
     # log args
     print(args)
-
+    datasets["train"][3]
     # start training
     st_epoch = args.resume_epoch if args.resume_epoch > 0 else 0
     best_valid_loss = np.inf
@@ -162,6 +162,7 @@ def main():
                     with torch.set_grad_enabled(phase == "train"):
                         # state_cur (unnormalized): B x n_his x (n_p + n_s) x state_dim
                         state_cur = particles[:, : args.n_his]
+                        # state_cur[:, :, -1] = particles[:, 1:, -1]
 
                         # Rrs_cur, Rss_cur: B x n_rel x (n_p + n_s)
                         Rr_cur = Rrs[:, args.n_his - 1]
@@ -169,7 +170,6 @@ def main():
 
                         # predict the velocity at the next time step
                         inputs = [attrs, state_cur, Rr_cur, Rs_cur, memory_init, groups_gt]
-
                         # pred_pos (unnormalized): B x n_p x state_dim
                         # pred_motion_norm (normalized): B x n_p x state_dim
                         pred_pos, pred_motion_norm = model.predict_dynamics(inputs)

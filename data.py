@@ -76,17 +76,21 @@ def load_data_fluidlab(args, data_path):
     indices_path = os.path.join(data_path, "fps.npy")
     indices = np.load(indices_path, mmap_mode="r+")
     params_path = os.path.join(data_path, "stat.npy")
-    particles = np.load(particles_path, mmap_mode="r+")
-    particles = particles[indices]
-    pos_boundary = np.array([[0.5, 0.75, 0.5]])
-    particles = np.transpose(particles, (1, 0, 2))
-    n_particle = particles.shape[1]
-    pos_boundary = np.tile(pos_boundary, (args.time_step, 1, 1))
-    particles = np.concatenate((particles, pos_boundary), axis=1)
+    loaded_particles = np.load(particles_path, mmap_mode="r+")
+    fps_particles = loaded_particles[indices, :args.time_step]
+    shape_poses = loaded_particles[-1, :args.time_step]
+    smth = np.concatenate(
+        (fps_particles, np.expand_dims(loaded_particles[-1, :args.time_step], 0)),
+        axis=0,
+    )
+    particles_i = np.concatenate((fps_particles[:, :-1], np.expand_dims(shape_poses[1:], 0)),axis=0,)
+    particles_i = np.concatenate((particles_i, np.expand_dims(smth[:, -1], 1)), axis=1)
+    particles_i = np.transpose(particles_i, (1,0,2))
+    n_particle = particles_i.shape[1] - 1
     scene_params = np.load(params_path, mmap_mode="r+")[indices]
     scene_params = np.expand_dims(scene_params, 0)
     n_shapes = 1
-    return particles, n_particle, n_shapes, scene_params, indices.copy()
+    return particles_i, n_particle, n_shapes, scene_params, indices.copy()
 
 
 def get_env_group(args, n_particles, scene_params, use_gpu=False):
@@ -125,6 +129,9 @@ def get_env_group(args, n_particles, scene_params, use_gpu=False):
     else:
         raise AssertionError("Unsupported env")
 
+    if args.env == "Pouring":
+        physics_param[scene_params[:, :n_particles] == 0] = 0.5  # density of milk
+        physics_param[scene_params[:, :n_particles] == 1] = 1  # density of water
     if use_gpu:
         p_rigid = p_rigid.cuda()
         p_instance = p_instance.cuda()
@@ -137,7 +144,13 @@ def get_env_group(args, n_particles, scene_params, use_gpu=False):
 
 
 def prepare_input(
-    positions, n_particle, n_shape, args, bottom_cup_xyz, var=False, shape_quat=None
+    positions,
+    n_particle,
+    n_shape,
+    args,
+    bottom_cup_xyz=None,
+    var=False,
+    shape_quat=None,
 ):
     # positions: (n_p + n_s) x 3
 
@@ -187,6 +200,7 @@ def prepare_input(
 
         pin = np.ones(nodes.shape[0], dtype=int) * n_particle
         rels += [np.stack([nodes, pin], axis=1)]
+
     elif args.env == "LatteArt":
         pos = (
             positions.cpu().numpy()[:n_particle]
@@ -264,22 +278,20 @@ def prepare_input(
 
 
 class FluidLabDataset(Dataset):
-    def __init__(self, args, phase, K=100):
+    def __init__(self, args, phase):
         self.args = args
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.phase = phase
-        args.k = self.K = K
+        self.K = args.k
         self.data_dir = os.path.join(self.args.dataf, phase)
         self.vision_dir = self.data_dir + "_vision"
         self.bottom_cup_xyz = (
             torch.Tensor([0.5, 0.05, 0.5]).to(torch.float64).to("cuda")
         )
         self.stat_path = os.path.join(self.args.dataf, "stat.h5")
-        args.n_rollout = 100
-        args.time_step = 1000
-        self.data_dir = "data/data_Pouring/train"
-        args.env = "Pouring"
+        args.n_rollout = 10
         a = time()
+        print("self.data_dir:", self.data_dir)
         self.get_scene_info(args, self.data_dir, phase)
         print(time() - a, "seconds!")
         self.n_particle = self.K
@@ -301,18 +313,21 @@ class FluidLabDataset(Dataset):
         print(f"phase: {phase} self.n_rollout: {self.n_rollout}")
 
     def load_trajs(self, args):
-        idx, data_path, k, state_dim = args
-        data_path = "data/data_Pouring/train"
+        idx, data_path, k, state_dim, time_step = args
         particles_path = os.path.join(data_path, str(idx), "x_t.npy")
         indices_path = os.path.join(data_path, str(idx), "fps.npy")
         quat_path = os.path.join(data_path, str(idx), "quat.npy")
-        quats_i = np.load(quat_path)
+        quats_i = np.load(quat_path)[:time_step]
         indices_i = np.load(indices_path, mmap_mode="r+")
         loaded_particles = np.load(particles_path, mmap_mode="r+")
-        particles_i = np.concatenate(
-            (loaded_particles[indices_i], np.expand_dims(loaded_particles[-1], 0)),
+        fps_particles = loaded_particles[indices_i][:, :time_step]
+        shape_poses = loaded_particles[-1, :time_step]
+        smth = np.concatenate(
+            (fps_particles, np.expand_dims(loaded_particles[-1, :time_step], 0)),
             axis=0,
         )
+        particles_i = np.concatenate((fps_particles[:, :-1], np.expand_dims(shape_poses[1:], 0)),axis=0,)
+        particles_i = np.concatenate((particles_i, np.expand_dims(smth[:, -1], 1)), axis=1)
         self.all_particles[idx] = particles_i
         self.sampled_indices[idx] = indices_i
         self.all_shape_quats[idx] = quats_i
@@ -325,14 +340,14 @@ class FluidLabDataset(Dataset):
             n_rollout = args.n_rollout
             n_rollout = 100
         k, state_dim = args.k, args.state_dim
-        time_step = 1000
+        # time_step = 1000
         self.all_particles = np.zeros((n_rollout, k + 1, time_step, state_dim))
         self.sampled_indices = np.zeros((n_rollout, k), dtype=int)
         self.all_shape_quats = np.zeros((n_rollout, time_step, 4))
         with ThreadPool(6) as pool:
             pool.map(
                 self.load_trajs,
-                [(i, data_path, k, state_dim) for i in range(n_rollout)],
+                [(i, data_path, k, state_dim, time_step) for i in range(n_rollout)],
             )
         self.all_particles = np.transpose(self.all_particles, (0, 2, 1, 3))
         params_path = os.path.join(data_path, "0", "stat.npy")
@@ -561,7 +576,7 @@ class PhysicsFleXDataset(Dataset):
                 # attr: (n_p + n_s) x attr_dim
                 # particle (unnormalized): (n_p + n_s) x state_dim
                 # Rr, Rs: n_rel x (n_p + n_s)
-                attr, particle, Rr, Rs = prepare_input(
+                attr, particle, Rr, Rs, _ = prepare_input(
                     data[0], n_particle, n_shape, self.args
                 )
 

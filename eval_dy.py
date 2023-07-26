@@ -23,10 +23,10 @@ import matplotlib.pyplot as plt
 args = gen_args()
 set_seed(args.random_seed)
 
-os.system('mkdir -p ' + args.evalf)
-os.system('mkdir -p ' + os.path.join(args.evalf, 'render'))
+os.system("mkdir -p " + args.evalf)
+os.system("mkdir -p " + os.path.join(args.evalf, "render"))
 
-tee = Tee(os.path.join(args.evalf, 'eval.log'), 'w')
+tee = Tee(os.path.join(args.evalf, "eval.log"), "w")
 
 
 ### evaluating
@@ -40,20 +40,22 @@ model = Model(args, use_gpu)
 print("model_kp #params: %d" % count_parameters(model))
 
 if args.eval_epoch < 0:
-    model_name = 'net_best.pth'
+    model_name = "net_best.pth"
 else:
-    model_name = 'net_epoch_%d_iter_%d.pth' % (args.eval_epoch, args.eval_iter)
+    model_name = "net_epoch_%d_iter_%d.pth" % (args.eval_epoch, args.eval_iter)
 
 model_path = os.path.join(args.outf, model_name)
 print("Loading network from %s" % model_path)
 
-if args.stage == 'dy':
+if args.stage == "dy":
     pretrained_dict = torch.load(model_path)
     model_dict = model.state_dict()
     # only load parameters in dynamics_predictor
     pretrained_dict = {
-        k: v for k, v in pretrained_dict.items() \
-        if 'dynamics_predictor' in k and k in model_dict}
+        k: v
+        for k, v in pretrained_dict.items()
+        if "dynamics_predictor" in k and k in model_dict
+    }
     model.load_state_dict(pretrained_dict, strict=False)
 
 else:
@@ -69,7 +71,6 @@ if use_gpu:
 infos = np.arange(10)
 
 for idx_episode in range(len(infos)):
-
     print("Rollout %d / %d" % (idx_episode, len(infos)))
 
     B = 1
@@ -80,7 +81,9 @@ for idx_episode in range(len(infos)):
     p_gt = []
     s_gt = []
     for step in range(args.time_step):
-        data_path = os.path.join(args.dataf, 'valid', str(infos[idx_episode]), str(step) + '.h5')
+        data_path = os.path.join(
+            args.dataf, "train", str(infos[idx_episode]), str(step) + ".h5"
+        )
 
         data = load_data(data_names, data_path)
 
@@ -106,26 +109,24 @@ for idx_episode in range(len(infos)):
     # initialize particle grouping
     group_gt = get_env_group(args, n_particle, scene_params, use_gpu=use_gpu)
 
-    print('scene_params:', group_gt[-1][0, 0].item())
+    print("scene_params:", group_gt[-1][0, 0].item())
 
     # memory: B x mem_nlayer x (n_particle + n_shape) x nf_memory
     # for now, only used as a placeholder
     memory_init = model.init_memory(B, n_particle + n_shape)
 
     # model rollout
-    loss = 0.
-    loss_raw = 0.
-    loss_counter = 0.
+    loss = 0.0
+    loss_raw = 0.0
+    loss_counter = 0.0
     st_idx = args.n_his
     ed_idx = args.sequence_length
 
     with torch.set_grad_enabled(False):
-
         for step_id in range(st_idx, ed_idx):
-
             if step_id == st_idx:
                 # state_cur (unnormalized): n_his x (n_p + n_s) x state_dim
-                state_cur = p_gt[step_id - args.n_his:step_id]
+                state_cur = p_gt[step_id - args.n_his : step_id]
                 if use_gpu:
                     state_cur = state_cur.cuda()
 
@@ -135,7 +136,9 @@ for idx_episode in range(len(infos)):
             # attr: (n_p + n_s) x attr_dim
             # Rr_cur, Rs_cur: n_rel x (n_p + n_s)
             # state_cur (unnormalized): n_his x (n_p + n_s) x state_dim
-            attr, _, Rr_cur, Rs_cur = prepare_input(state_cur[-1].cpu().numpy(), n_particle, n_shape, args)
+            attr, _, Rr_cur, Rs_cur, _ = prepare_input(
+                state_cur[-1].cpu().numpy(), n_particle, n_shape, args
+            )
 
             if use_gpu:
                 attr = attr.cuda()
@@ -154,7 +157,7 @@ for idx_episode in range(len(infos)):
             Rs_cur = Rs_cur.unsqueeze(0)
             state_cur = state_cur.unsqueeze(0)
 
-            if args.stage in ['dy']:
+            if args.stage in ["dy"]:
                 inputs = [attr, state_cur, Rr_cur, Rs_cur, memory_init, group_gt]
 
             # pred_pos (unnormalized): B x n_p x state_dim
@@ -175,9 +178,13 @@ for idx_episode in range(len(infos)):
                 gt_motion = gt_motion.cuda()
             mean_d, std_d = model.stat[2:]
             gt_motion_norm = (gt_motion - mean_d) / std_d
-            pred_motion_norm = torch.cat([pred_motion_norm, gt_motion_norm[:, n_particle:]], 1)
+            pred_motion_norm = torch.cat(
+                [pred_motion_norm, gt_motion_norm[:, n_particle:]], 1
+            )
 
-            loss_cur = F.l1_loss(pred_motion_norm[:, :n_particle], gt_motion_norm[:, :n_particle])
+            loss_cur = F.l1_loss(
+                pred_motion_norm[:, :n_particle], gt_motion_norm[:, :n_particle]
+            )
             loss_cur_raw = F.l1_loss(pred_pos, gt_pos)
 
             loss += loss_cur
@@ -191,18 +198,16 @@ for idx_episode in range(len(infos)):
             # record the prediction
             p_pred[step_id] = state_cur[-1].detach().cpu()
 
-
-    '''
+    """
     print loss
-    '''
+    """
     loss /= loss_counter
     loss_raw /= loss_counter
     print("loss: %.6f, loss_raw: %.10f" % (loss.item(), loss_raw.item()))
 
-
-    '''
+    """
     visualization
-    '''
+    """
     group_gt = [d.data.cpu().numpy()[0, ...] for d in group_gt]
     p_pred = p_pred.numpy()[st_idx:ed_idx]
     p_gt = p_gt.numpy()[st_idx:ed_idx]
@@ -210,17 +215,15 @@ for idx_episode in range(len(infos)):
     vis_length = ed_idx - st_idx
 
     if args.vispy:
-
         ### render in VisPy
         import vispy.scene
         from vispy import app
         from vispy.visuals import transforms
-
+        app.create()
         particle_size = 0.01
         border = 0.025
         height = 1.3
         y_rotate_deg = -45.0
-
 
         def y_rotate(obj, deg=y_rotate_deg):
             tr = vispy.visuals.transforms.MatrixTransform()
@@ -231,19 +234,21 @@ for idx_episode in range(len(infos)):
             # add floor
             floor_length = 3.0
             w, h, d = floor_length, floor_length, border
-            b1 = vispy.scene.visuals.Box(width=w, height=h, depth=d, color=[0.8, 0.8, 0.8, 1], edge_color='black')
+            b1 = vispy.scene.visuals.Box(
+                width=w, height=h, depth=d, color=[0.8, 0.8, 0.8, 1], edge_color="black"
+            )
             y_rotate(b1)
             v.add(b1)
 
             # adjust position of box
             mesh_b1 = b1.mesh.mesh_data
             v1 = mesh_b1.get_vertices()
-            c1 = np.array([0., -particle_size - border, 0.], dtype=np.float32)
+            c1 = np.array([0.0, -particle_size - border, 0.0], dtype=np.float32)
             mesh_b1.set_vertices(np.add(v1, c1))
 
             mesh_border_b1 = b1.border.mesh_data
             vv1 = mesh_border_b1.get_vertices()
-            cc1 = np.array([0., -particle_size - border, 0.], dtype=np.float32)
+            cc1 = np.array([0.0, -particle_size - border, 0.0], dtype=np.float32)
             mesh_border_b1.set_vertices(np.add(vv1, cc1))
 
         def update_box_states(boxes, last_states, curr_states):
@@ -258,7 +263,9 @@ for idx_episode in range(len(infos)):
             for i, box in enumerate(boxes):
                 # use v to update box translation
                 trans = (curr_states[i][0], curr_states[i][1], curr_states[i][2])
-                box.transform = tr * vispy.visuals.transforms.STTransform(translate=trans)
+                box.transform = tr * vispy.visuals.transforms.STTransform(
+                    translate=trans
+                )
 
         def translate_box(b, x, y, z):
             mesh_b = b.mesh.mesh_data
@@ -284,7 +291,9 @@ for idx_episode in range(len(infos)):
             :return: None
             """
             # render background box
-            b = vispy.scene.visuals.Box(width=w, height=h, depth=d, color=[0.8, 0.8, 0.8, 1], edge_color='black')
+            b = vispy.scene.visuals.Box(
+                width=w, height=h, depth=d, color=[0.8, 0.8, 0.8, 1], edge_color="black"
+            )
             y_rotate(b)
             v.add(b)
 
@@ -297,13 +306,13 @@ for idx_episode in range(len(infos)):
             boxes = []
 
             # floor
-            boxes.append([x, z, border, 0., -particle_size / 2, 0.])
+            boxes.append([x, z, border, 0.0, -particle_size / 2, 0.0])
 
             # left wall
-            boxes.append([border, z, (height + border), -particle_size / 2, 0., 0.])
+            boxes.append([border, z, (height + border), -particle_size / 2, 0.0, 0.0])
 
             # right wall
-            boxes.append([border, z, (height + border), particle_size / 2, 0., 0.])
+            boxes.append([border, z, (height + border), particle_size / 2, 0.0, 0.0])
 
             # back wall
             boxes.append([(x + border * 2), border, (height + border)])
@@ -326,20 +335,23 @@ for idx_episode in range(len(infos)):
                 visuals.append(visual)
             return visuals
 
-
-        c = vispy.scene.SceneCanvas(keys='interactive', show=True, bgcolor='white')
+        c = vispy.scene.SceneCanvas(keys="interactive", show=True, bgcolor="white")
         view = c.central_widget.add_view()
 
-        if args.env == 'RigidFall':
-            view.camera = vispy.scene.cameras.TurntableCamera(fov=50, azimuth=45, elevation=20, distance=2, up='+y')
+        if args.env == "RigidFall":
+            view.camera = vispy.scene.cameras.TurntableCamera(
+                fov=50, azimuth=45, elevation=20, distance=2, up="+y"
+            )
             # set instance colors
             instance_colors = create_instance_colors(args.n_instance)
 
             # render floor
             add_floor(view)
 
-        if args.env == 'MassRope':
-            view.camera = vispy.scene.cameras.TurntableCamera(fov=30, azimuth=0, elevation=20, distance=8, up='+y')
+        if args.env == "MassRope":
+            view.camera = vispy.scene.cameras.TurntableCamera(
+                fov=30, azimuth=0, elevation=20, distance=8, up="+y"
+            )
 
             # set instance colors
             n_string_particles = 15
@@ -347,7 +359,6 @@ for idx_episode in range(len(infos)):
 
             # render floor
             add_floor(view)
-
 
         # render particles
         p1 = vispy.scene.visuals.Markers()
@@ -359,28 +370,28 @@ for idx_episode in range(len(infos)):
 
         # set animation
         t_step = 0
+        gt_array = []
+        pred_array = []
 
-
-        '''
+        """
         set up data for rendering
-        '''
-        #0 - p_pred: seq_length x n_p x 3
-        #1 - p_gt: seq_length x n_p x 3
-        #2 - s_gt: seq_length x n_s x 3
-        print('p_pred', p_pred.shape)
-        print('p_gt', p_gt.shape)
-        print('s_gt', s_gt.shape)
+        """
+        # 0 - p_pred: seq_length x n_p x 3
+        # 1 - p_gt: seq_length x n_p x 3
+        # 2 - s_gt: seq_length x n_s x 3
+        print("p_pred", p_pred.shape)
+        print("p_gt", p_gt.shape)
+        print("s_gt", s_gt.shape)
 
         # create directory to save images if not exist
         vispy_dir = args.evalf + "/vispy"
-        os.system('mkdir -p ' + vispy_dir)
-
+        os.system("mkdir -p " + vispy_dir)
 
         def update(event):
             global p1
             global t_step
             global colors
-
+            # print(t_step)
             if t_step < vis_length:
                 if t_step == 0:
                     print("Rendering ground truth")
@@ -388,18 +399,25 @@ for idx_episode in range(len(infos)):
                 t_actual = t_step
 
                 colors = convert_groups_to_colors(
-                    group_gt, n_particle, args.n_instance,
-                    instance_colors=instance_colors, env=args.env)
+                    group_gt,
+                    n_particle,
+                    args.n_instance,
+                    instance_colors=instance_colors,
+                    env=args.env,
+                )
 
-                colors = np.clip(colors, 0., 1.)
+                colors = np.clip(colors, 0.0, 1.0)
 
-                p1.set_data(p_gt[t_actual, :n_particle], edge_color='black', face_color=colors)
+                p1.set_data(
+                    p_gt[t_actual, :n_particle], edge_color="black", face_color=colors
+                )
 
                 # render for ground truth
                 img = c.render()
-                img_path = os.path.join(vispy_dir, "gt_{}_{}.png".format(str(idx_episode), str(t_actual)))
+                img_path = os.path.join(
+                    vispy_dir, "gt_{}_{}.png".format(str(idx_episode), str(t_actual))
+                )
                 vispy.io.write_png(img_path, img)
-
 
             elif vis_length <= t_step < vis_length * 2:
                 if t_step == vis_length:
@@ -408,46 +426,61 @@ for idx_episode in range(len(infos)):
                 t_actual = t_step - vis_length
 
                 colors = convert_groups_to_colors(
-                    group_gt, n_particle, args.n_instance,
-                    instance_colors=instance_colors, env=args.env)
+                    group_gt,
+                    n_particle,
+                    args.n_instance,
+                    instance_colors=instance_colors,
+                    env=args.env,
+                )
 
-                colors = np.clip(colors, 0., 1.)
+                colors = np.clip(colors, 0.0, 1.0)
 
-                p1.set_data(p_pred[t_actual, :n_particle], edge_color='black', face_color=colors)
+                p1.set_data(
+                    p_pred[t_actual, :n_particle], edge_color="black", face_color=colors
+                )
 
                 # render for perception result
                 img = c.render()
-                img_path = os.path.join(vispy_dir, "pred_{}_{}.png".format(str(idx_episode), str(t_actual)))
+                img_path = os.path.join(
+                    vispy_dir, "pred_{}_{}.png".format(str(idx_episode), str(t_actual))
+                )
                 vispy.io.write_png(img_path, img)
 
             else:
                 # discarded frames
-                pass
+                app.quit()
+                # pass
 
             # time forward
             t_step += 1
 
-
+        print(vis_length)
         # start animation
         timer = app.Timer()
         timer.connect(update)
-        timer.start(interval=1. / 60., iterations=vis_length * 2)
+        timer.start(interval=1.0 / 60.0, iterations=vis_length * 2 + 1)
 
         c.show()
         app.run()
-
+        saved_idx_episode = idx_episode
         # render video for evaluating grouping result
-        if args.stage in ['dy']:
+        if args.stage in ["dy"]:
             print("Render video for dynamics prediction")
 
-            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             out = cv2.VideoWriter(
-                os.path.join(args.evalf, 'vid_%d_vispy.avi' % (idx_episode)),
-                fourcc, 20, (800 * 2, 600))
-
+                os.path.join(args.evalf, "vid_%d_vispy.mp4" % (saved_idx_episode)),
+                fourcc,
+                20,
+                (800 * 2, 600),
+            )
             for step in range(vis_length):
-                gt_path = os.path.join(args.evalf, 'vispy', 'gt_%d_%d.png' % (idx_episode, step))
-                pred_path = os.path.join(args.evalf, 'vispy', 'pred_%d_%d.png' % (idx_episode, step))
+                gt_path = os.path.join(
+                    args.evalf, "vispy", "gt_%d_%d.png" % (saved_idx_episode, step)
+                )
+                pred_path = os.path.join(
+                    args.evalf, "vispy", "pred_%d_%d.png" % (saved_idx_episode, step)
+                )
 
                 gt = cv2.imread(gt_path)
                 pred = cv2.imread(pred_path)
@@ -459,4 +492,3 @@ for idx_episode in range(len(infos)):
                 out.write(frame)
 
             out.release()
-

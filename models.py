@@ -1,5 +1,5 @@
 import numpy as np
-
+import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -96,6 +96,7 @@ class DynamicsPredictor(nn.Module):
             self.quat_offset = self.quat_offset.cuda()
 
         # ParticleEncoder
+        # input_dim = attr_dim + 1 + n_his * state_dim * 2 + mem_dim + n_his
         input_dim = attr_dim + 1 + n_his * state_dim * 2 + mem_dim
         self.particle_encoder = Encoder(input_dim, nf_particle, nf_effect)
 
@@ -168,6 +169,29 @@ class DynamicsPredictor(nn.Module):
 
         n_his = args.n_his
         state_dim = args.state_dim
+        if args.env == "Pouring":
+            boundary = torch.Tensor([
+                [0.05, 0.05, 0.05],
+                [0.95, 0.95, 0.95]
+            ]).cuda()
+            stacked_state = einops.rearrange(
+                state, 
+                "b n_his N state_dim -> b n_his N 1 state_dim"
+            )
+            dists = torch.abs(stacked_state - boundary)
+            dists = einops.reduce(
+                dists,
+                "b n_his N bounds direction -> b n_his N direction", 
+                "min"
+            )
+            dists = einops.reduce(
+                dists,
+                "b n_his N direction -> b n_his N", "sum"
+            )
+            dists = einops.rearrange(
+                dists,
+                "b n_his N -> b N n_his"
+            ).contiguous()
 
         # state_norm (normalized): B x n_his x N x state_dim
         # [0, n_his - 1): state_residual
@@ -206,6 +230,7 @@ class DynamicsPredictor(nn.Module):
         if self.use_gpu:
             physics_param_s = physics_param_s.cuda()
         physics_param = torch.cat([physics_param[:, :, None], physics_param_s], 1)
+        
         attrs = torch.cat([attrs, physics_param, offset, memory_t], 2)
 
         # group info
