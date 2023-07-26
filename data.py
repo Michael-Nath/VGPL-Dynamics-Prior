@@ -459,27 +459,28 @@ class FluidLabDataset(Dataset):
 
 
 class PhysicsFleXDataset(Dataset):
+
     def __init__(self, args, phase):
         self.args = args
         self.phase = phase
         self.data_dir = os.path.join(self.args.dataf, phase)
-        self.vision_dir = self.data_dir + "_vision"
-        self.stat_path = os.path.join(self.args.dataf, "stat.h5")
+        self.vision_dir = self.data_dir + '_vision'
+        self.stat_path = os.path.join(self.args.dataf, 'stat.h5')
 
         if args.gen_data:
-            os.system("mkdir -p " + self.data_dir)
+            os.system('mkdir -p ' + self.data_dir)
         if args.gen_vision:
-            os.system("mkdir -p " + self.vision_dir)
+            os.system('mkdir -p ' + self.vision_dir)
 
-        if args.env in ["RigidFall", "MassRope"]:
-            self.data_names = ["positions", "shape_quats", "scene_params"]
+        if args.env in ['RigidFall', 'MassRope']:
+            self.data_names = ['positions', 'shape_quats', 'scene_params']
         else:
             raise AssertionError("Unsupported env")
 
         ratio = self.args.train_valid_ratio
-        if phase == "train":
+        if phase == 'train':
             self.n_rollout = int(self.args.n_rollout * ratio)
-        elif phase == "valid":
+        elif phase == 'valid':
             self.n_rollout = self.args.n_rollout - int(self.args.n_rollout * ratio)
         else:
             raise AssertionError("Unknown phase")
@@ -497,33 +498,30 @@ class PhysicsFleXDataset(Dataset):
 
     def gen_data(self, name):
         # if the data hasn't been generated, generate the data
-        print(
-            "Generating data ... n_rollout=%d, time_step=%d"
-            % (self.n_rollout, self.args.time_step)
-        )
+        print("Generating data ... n_rollout=%d, time_step=%d" % (self.n_rollout, self.args.time_step))
 
         infos = []
         for i in range(self.args.num_workers):
             info = {
-                "env": self.args.env,
-                "thread_idx": i,
-                "data_dir": self.data_dir,
-                "data_names": self.data_names,
-                "n_rollout": self.n_rollout // self.args.num_workers,
-                "time_step": self.args.time_step,
-                "dt": self.args.dt,
-                "shape_state_dim": self.args.shape_state_dim,
-                "physics_param_range": self.args.physics_param_range,
-                "gen_vision": self.args.gen_vision,
-                "vision_dir": self.vision_dir,
-                "vis_width": self.args.vis_width,
-                "vis_height": self.args.vis_height,
-            }
+                'env': self.args.env,
+                'thread_idx': i,
+                'data_dir': self.data_dir,
+                'data_names': self.data_names,
+                'n_rollout': self.n_rollout // self.args.num_workers,
+                'time_step': self.args.time_step,
+                'dt': self.args.dt,
+                'shape_state_dim': self.args.shape_state_dim,
+                'physics_param_range': self.args.physics_param_range,
 
-            if self.args.env == "RigidFall":
-                info["env_idx"] = 3
-            elif self.args.env == "MassRope":
-                info["env_idx"] = 9
+                'gen_vision': self.args.gen_vision,
+                'vision_dir': self.vision_dir,
+                'vis_width': self.args.vis_width,
+                'vis_height': self.args.vis_height}
+
+            if self.args.env == 'RigidFall':
+                info['env_idx'] = 3
+            elif self.args.env == 'MassRope':
+                info['env_idx'] = 9
             else:
                 raise AssertionError("Unsupported env")
 
@@ -535,7 +533,7 @@ class PhysicsFleXDataset(Dataset):
 
         print("Training data generated, warpping up stats ...")
 
-        if self.phase == "train" and self.args.gen_stat:
+        if self.phase == 'train' and self.args.gen_stat:
             # positions [x, y, z]
             self.stat = [init_stat(3)]
             for i in range(len(data)):
@@ -558,15 +556,13 @@ class PhysicsFleXDataset(Dataset):
         st_idx = idx % offset
         ed_idx = st_idx + args.sequence_length
 
-        if args.stage in ["dy"]:
+        if args.stage in ['dy']:
             # load ground truth data
             attrs, particles, Rrs, Rss = [], [], [], []
             max_n_rel = 0
             for t in range(st_idx, ed_idx):
                 # load data
-                data_path = os.path.join(
-                    self.data_dir, str(idx_rollout), str(t) + ".h5"
-                )
+                data_path = os.path.join(self.data_dir, str(idx_rollout), str(t) + '.h5')
                 data = load_data(self.data_names, data_path)
 
                 # load scene param
@@ -576,9 +572,7 @@ class PhysicsFleXDataset(Dataset):
                 # attr: (n_p + n_s) x attr_dim
                 # particle (unnormalized): (n_p + n_s) x state_dim
                 # Rr, Rs: n_rel x (n_p + n_s)
-                attr, particle, Rr, Rs, _ = prepare_input(
-                    data[0], n_particle, n_shape, self.args
-                )
+                attr, particle, Rr, Rs, _ = prepare_input(data[0], n_particle, n_shape, self.args)
 
                 max_n_rel = max(max_n_rel, Rr.size(0))
 
@@ -586,10 +580,12 @@ class PhysicsFleXDataset(Dataset):
                 particles.append(particle.numpy())
                 Rrs.append(Rr)
                 Rss.append(Rs)
-        """
+
+
+        '''
         add augmentation
-        """
-        if args.stage in ["dy"]:
+        '''
+        if args.stage in ['dy']:
             for t in range(args.sequence_length):
                 if t == args.n_his - 1:
                     # set anchor for transforming rigid objects
@@ -597,36 +593,32 @@ class PhysicsFleXDataset(Dataset):
 
                 if t < args.n_his:
                     # add noise to observation frames - idx smaller than n_his
-                    noise = (
-                        np.random.randn(n_particle, 3) * args.std_d * args.augment_ratio
-                    )
+                    noise = np.random.randn(n_particle, 3) * args.std_d * args.augment_ratio
                     particles[t][:n_particle] += noise
 
                 else:
                     # for augmenting rigid object,
                     # make sure the rigid transformation is the same before and after augmentation
-                    if args.env == "RigidFall":
+                    if args.env == 'RigidFall':
                         for k in range(args.n_instance):
-                            XX = particle_anchor[64 * k : 64 * (k + 1)]
-                            XX_noise = particles[args.n_his - 1][64 * k : 64 * (k + 1)]
+                            XX = particle_anchor[64*k:64*(k+1)]
+                            XX_noise = particles[args.n_his - 1][64*k:64*(k+1)]
 
-                            YY = particles[t][64 * k : 64 * (k + 1)]
+                            YY = particles[t][64*k:64*(k+1)]
 
                             R, T = calc_rigid_transform(XX, YY)
 
-                            particles[t][64 * k : 64 * (k + 1)] = (
-                                np.dot(R, XX_noise.T) + T
-                            ).T
+                            particles[t][64*k:64*(k+1)] = (np.dot(R, XX_noise.T) + T).T
 
-                            """
+                            '''
                             # checking the correctness of the implementation
                             YY_noise = particles[t][64*k:64*(k+1)]
                             RR, TT = calc_rigid_transform(XX_noise, YY_noise)
                             print(R, T)
                             print(RR, TT)
-                            """
+                            '''
 
-                    elif args.env == "MassRope":
+                    elif args.env == 'MassRope':
                         n_rigid_particle = 81
 
                         XX = particle_anchor[:n_rigid_particle]
@@ -637,16 +629,17 @@ class PhysicsFleXDataset(Dataset):
 
                         particles[t][:n_rigid_particle] = (np.dot(R, XX_noise.T) + T).T
 
-                        """
+                        '''
                         # checking the correctness of the implementation
                         YY_noise = particles[t][:n_rigid_particle]
                         RR, TT = calc_rigid_transform(XX_noise, YY_noise)
                         print(R, T)
                         print(RR, TT)
-                        """
+                        '''
 
         else:
             AssertionError("Unknown stage %s" % args.stage)
+
 
         # attr: (n_p + n_s) x attr_dim
         # particles (unnormalized): seq_length x (n_p + n_s) x state_dim
@@ -657,21 +650,19 @@ class PhysicsFleXDataset(Dataset):
 
         # pad the relation set
         # Rr, Rs: seq_length x n_rel x (n_p + n_s)
-        if args.stage in ["dy"]:
+        if args.stage in ['dy']:
             for i in range(len(Rrs)):
                 Rr, Rs = Rrs[i], Rss[i]
-                Rr = torch.cat(
-                    [Rr, torch.zeros(max_n_rel - Rr.size(0), n_particle + n_shape)], 0
-                )
-                Rs = torch.cat(
-                    [Rs, torch.zeros(max_n_rel - Rs.size(0), n_particle + n_shape)], 0
-                )
+                Rr = torch.cat([Rr, torch.zeros(max_n_rel - Rr.size(0), n_particle + n_shape)], 0)
+                Rs = torch.cat([Rs, torch.zeros(max_n_rel - Rs.size(0), n_particle + n_shape)], 0)
                 Rrs[i], Rss[i] = Rr, Rs
             Rr = torch.FloatTensor(np.stack(Rrs))
             Rs = torch.FloatTensor(np.stack(Rss))
 
-        if args.stage in ["dy"]:
+
+        if args.stage in ['dy']:
             return attr, particles, n_particle, n_shape, scene_params, Rr, Rs
+
 
 
 if __name__ == "__main__":

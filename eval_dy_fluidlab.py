@@ -68,7 +68,7 @@ if use_gpu:
     model = model.cuda()
 
 
-infos = np.arange(10)
+infos = np.arange(1)
 
 for idx_episode in range(len(infos)):
     print("Rollout %d / %d" % (idx_episode, len(infos)))

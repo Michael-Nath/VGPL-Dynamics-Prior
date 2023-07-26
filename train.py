@@ -25,7 +25,7 @@ def main():
 
     tee = Tee(os.path.join(args.outf, "train.log"), "w")
 
-    # wandb.init(project="vgpl-training", config=args, name=args.env)
+    wandb.init(project="vgpl-training", config=args, name=args.env)
 
     ### training
 
@@ -162,14 +162,13 @@ def main():
                     with torch.set_grad_enabled(phase == "train"):
                         # state_cur (unnormalized): B x n_his x (n_p + n_s) x state_dim
                         state_cur = particles[:, : args.n_his]
-                        # state_cur[:, :, -1] = particles[:, 1:, -1]
-
                         # Rrs_cur, Rss_cur: B x n_rel x (n_p + n_s)
                         Rr_cur = Rrs[:, args.n_his - 1]
                         Rs_cur = Rss[:, args.n_his - 1]
 
                         # predict the velocity at the next time step
                         inputs = [attrs, state_cur, Rr_cur, Rs_cur, memory_init, groups_gt]
+
                         # pred_pos (unnormalized): B x n_p x state_dim
                         # pred_motion_norm (normalized): B x n_p x state_dim
                         pred_pos, pred_motion_norm = model.predict_dynamics(inputs)
@@ -213,15 +212,15 @@ def main():
                                 meter_loss_raw.avg,
                             )
                         )
-                        # wandb.log(
-                        #     {
-                        #         "loss": loss.item(),
-                        #         "meter_loss": meter_loss.avg,
-                        #         "loss_raw": loss_raw.item(),
-                        #         "meter_loss_raw_avg": meter_loss_raw.avg,
-                        #         "valid_loss": best_valid_loss
-                        #     }
-                        # )
+                        wandb.log(
+                            {
+                                "loss": loss.item(),
+                                "meter_loss": meter_loss.avg,
+                                "loss_raw": loss_raw.item(),
+                                "meter_loss_raw_avg": meter_loss_raw.avg,
+                                "valid_loss": best_valid_loss
+                            }
+                        )
 
                 # update model parameters
                 if phase == "train":

@@ -192,12 +192,12 @@ def gen_args():
         args.mean_d = np.array([-0.00097918, -0.00033966, -0.00080952])
         args.std_d = np.array([0.02086366, 0.0145161, 0.01856096])
     elif args.env == "Pouring":
-        args.n_rollout = 10
+        args.n_rollout = 1
         args.n_rollout_valid = 10
         args.time_step = 1000
         args.state_dim = 3
         args.attr_dim = 0
-        args.neighbor_radius = 0.35
+        args.neighbor_radius = 0.15
         args.neighbor_k = -1
         suffix = ""
         if args.n_instance == -1:
