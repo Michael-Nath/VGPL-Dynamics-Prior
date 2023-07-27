@@ -57,7 +57,34 @@ def init_stat(dim):
     # mean, std, count
     return np.zeros((dim, 3))
 
-
+def pad_relation_set(Rrs, Rss, n_particle, n_shape):
+    max_n_rel = 0
+    for i in range(len(Rrs)):
+        max_n_rel = max(max_n_rel, Rrs[i].size(0)) 
+    for i in range(len(Rrs)):
+        Rr, Rs = Rrs[i].cpu(), Rss[i].cpu()
+        Rr = torch.cat(
+            [
+                Rr,
+                torch.zeros(
+                    max_n_rel - Rr.size(0), n_particle + n_shape
+                ),
+            ],
+            0,
+        )
+        Rs = torch.cat(
+            [
+                Rs,
+                torch.zeros(
+                    max_n_rel - Rs.size(0), n_particle + n_shape
+                ),
+            ],
+            0,
+        )
+        Rrs[i], Rss[i] = Rr, Rs
+    Rr = torch.FloatTensor(np.stack(Rrs)).cpu()
+    Rs = torch.FloatTensor(np.stack(Rss)).cpu()
+    return Rr, Rs
 def get_scene_info(data):
     """
     A subset of prepare_input() just to get number of particles

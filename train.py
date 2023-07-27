@@ -11,10 +11,11 @@ from torch.utils.data import DataLoader
 
 from config import gen_args
 from data import PhysicsFleXDataset, FluidLabDataset
-from data import prepare_input, get_scene_info, get_env_group
+from data import prepare_input, get_scene_info, get_env_group, pad_relation_set
 from models import Model, ChamferLoss
 from utils import set_seed, AverageMeter, get_lr, Tee
 from utils import count_parameters, my_collate
+
 
 def main():
     args = gen_args()
@@ -59,7 +60,6 @@ def main():
 
     print("model #params: %d" % count_parameters(model))
 
-
     # checkpoint to reload model from
     model_path = None
 
@@ -69,7 +69,8 @@ def main():
 
     elif args.resume == 1:
         model_path = os.path.join(
-            args.outf, "net_epoch_%d_iter_%d.pth" % (args.resume_epoch, args.resume_iter)
+            args.outf,
+            "net_epoch_%d_iter_%d.pth" % (args.resume_epoch, args.resume_iter),
         )
         print("Loading saved ckp from %s" % model_path)
 
@@ -85,7 +86,6 @@ def main():
             }
             model.load_state_dict(pretrained_dict, strict=False)
 
-
     # optimizer
     if args.stage == "dy":
         params = model.dynamics_predictor.parameters()
@@ -100,7 +100,9 @@ def main():
         raise AssertionError("unknown optimizer: %s" % args.optimizer)
 
     # reduce learning rate when a metric has stopped improving
-    scheduler = ReduceLROnPlateau(optimizer, "min", factor=0.8, patience=3, verbose=True)
+    scheduler = ReduceLROnPlateau(
+        optimizer, "min", factor=0.8, patience=3, verbose=True
+    )
 
     # define loss
     particle_dist_loss = torch.nn.L1Loss()
@@ -136,7 +138,15 @@ def main():
                     # n_shapes: B
                     # scene_params: B x param_dim
                     # Rrs, Rss: B x seq_length x n_rel x (n_p + n_s)
-                    attrs, particles, n_particles, n_shapes, scene_params, Rrs, Rss = data
+                    (
+                        attrs,
+                        particles,
+                        n_particles,
+                        n_shapes,
+                        scene_params,
+                        Rrs,
+                        Rss,
+                    ) = data
 
                     if use_gpu:
                         attrs = attrs.cuda()
@@ -147,6 +157,7 @@ def main():
                     B = attrs.size(0)
                     n_particle = n_particles[0].item()
                     n_shape = n_shapes[0].item()
+                    state_dim = particles.shape[-1]
 
                     # p_rigid: B x n_instance
                     # p_instance: B x n_particle x n_instance
@@ -158,39 +169,97 @@ def main():
                     # memory: B x mem_nlayer x (n_particle + n_shape) x nf_memory
                     # for now, only used as a placeholder
                     memory_init = model.init_memory(B, n_particle + n_shape)
-
+                    num_future_preds = args.sequence_length - args.n_his
                     with torch.set_grad_enabled(phase == "train"):
-                        # state_cur (unnormalized): B x n_his x (n_p + n_s) x state_dim
-                        state_cur = particles[:, : args.n_his]
-                        # Rrs_cur, Rss_cur: B x n_rel x (n_p + n_s)
-                        Rr_cur = Rrs[:, args.n_his - 1]
-                        Rs_cur = Rss[:, args.n_his - 1]
+                        preds = torch.zeros(
+                            (num_future_preds, B, n_particle + n_shape, state_dim)
+                        ).cuda()
+                        gts = torch.zeros(
+                            (num_future_preds, B, n_particle + n_shape, state_dim)
+                        ).cuda()
+                        preds_motion = torch.zeros(
+                            (num_future_preds, B, n_particle + n_shape, state_dim)
+                        ).cuda()
+                        gts_motion = torch.zeros(
+                            (num_future_preds, B, n_particle + n_shape, state_dim)
+                        ).cuda()
+                        for j in range(num_future_preds):
+                            # state_cur (unnormalized): B x n_his x (n_p + n_s) x state_dim
+                            state_cur = particles[:, : args.n_his]
+                            # Rrs_cur, Rss_cur: B x n_rel x (n_p + n_s)
+                            Rr_cur = Rrs[:, args.n_his - 1]
+                            Rs_cur = Rss[:, args.n_his - 1]
 
-                        # predict the velocity at the next time step
-                        inputs = [attrs, state_cur, Rr_cur, Rs_cur, memory_init, groups_gt]
+                            # predict the velocity at the next time step
+                            inputs = [
+                                attrs,
+                                state_cur,
+                                Rr_cur,
+                                Rs_cur,
+                                memory_init,
+                                groups_gt,
+                            ]
 
-                        # pred_pos (unnormalized): B x n_p x state_dim
-                        # pred_motion_norm (normalized): B x n_p x state_dim
-                        pred_pos, pred_motion_norm = model.predict_dynamics(inputs)
+                            # pred_pos (unnormalized): B x n_p x state_dim
+                            # pred_motion_norm (normalized): B x n_p x state_dim
+                            pred_pos, pred_motion_norm = model.predict_dynamics(inputs)
 
-                        # concatenate the state of the shapes
-                        # pred_pos (unnormalized): B x (n_p + n_s) x state_dim
-                        gt_pos = particles[:, args.n_his]
-                        pred_pos = torch.cat([pred_pos, gt_pos[:, n_particle:]], 1)
+                            # concatenate the state of the shapes
+                            # pred_pos (unnormalized): B x (n_p + n_s) x state_dim
+                            gt_pos = particles[:, args.n_his].clone()
+                            pred_pos = torch.cat([pred_pos, gt_pos[:, n_particle:]], 1)
 
-                        # gt_motion_norm (normalized): B x (n_p + n_s) x state_dim
-                        # pred_motion_norm (normalized): B x (n_p + n_s) x state_dim
-                        gt_motion = particles[:, args.n_his] - particles[:, args.n_his - 1]
-                        mean_d, std_d = model.stat[2:]
-                        gt_motion_norm = (gt_motion - mean_d) / std_d
-                        pred_motion_norm = torch.cat(
-                            [pred_motion_norm, gt_motion_norm[:, n_particle:]], 1
-                        )
-
+                            # gt_motion_norm (normalized): B x (n_p + n_s) x state_dim
+                            # pred_motion_norm (normalized): B x (n_p + n_s) x state_dim
+                            gt_motion = (
+                                particles[:, args.n_his] - particles[:, args.n_his - 1]
+                            )
+                            mean_d, std_d = model.stat[2:]
+                            gt_motion_norm = (gt_motion - mean_d) / std_d
+                            pred_motion_norm = torch.cat(
+                                [pred_motion_norm, gt_motion_norm[:, n_particle:]], 1
+                            )
+                            # insert the most recent prediction's info in the appropriate spot
+                            particles[:, args.n_his] = pred_pos.clone()
+                            R_batch = []
+                            # Updating the batched relation sets (gotta account for padding as well)
+                            for k in range(B):
+                                Rrs_expanded = list(torch.unbind(Rrs[k]))
+                                Rss_expanded = list(torch.unbind(Rss[k]))
+                                (
+                                    _,
+                                    _,
+                                    Rrs_expanded[args.n_his],
+                                    Rss_expanded[args.n_his],
+                                    _,
+                                ) = prepare_input(
+                                    pred_pos[k].detach().cpu().numpy(),
+                                    n_particle,
+                                    n_shape,
+                                    args,
+                                )
+                                Rr_new, Rs_new = pad_relation_set(
+                                    Rrs_expanded, Rss_expanded, n_particle, n_shape
+                                )
+                                R_batch.append([Rr_new, Rs_new])
+                            Rrs, Rss = my_collate(R_batch)
+                            Rrs = Rrs.cuda()
+                            Rss = Rss.cuda()
+                            # eject the oldest frame
+                            # effectively we're swapping out the ground truth frame w/ our pred frame
+                            particles = particles[:, 1:]
+                            Rrs = Rrs[:, 1:]
+                            Rss = Rss[:, 1:]
+                            # insert our most recent pred in the set of multi-frame preds.
+                            preds[j] = pred_pos
+                            gts[j] = gt_pos
+                            preds_motion[j] = pred_motion_norm
+                            gts_motion[j] = gt_motion_norm
                         loss = F.l1_loss(
-                            pred_motion_norm[:, :n_particle], gt_motion_norm[:, :n_particle]
+                            preds_motion[:, :, :n_particle],
+                            gts_motion[:, :, :n_particle],
                         )
-                        loss_raw = F.l1_loss(pred_pos, gt_pos)
+                        loss_raw = F.l1_loss(preds, gts)
 
                         meter_loss.update(loss.item(), B)
                         meter_loss_raw.update(loss_raw.item(), B)
@@ -218,7 +287,7 @@ def main():
                                 "meter_loss": meter_loss.avg,
                                 "loss_raw": loss_raw.item(),
                                 "meter_loss_raw_avg": meter_loss_raw.avg,
-                                "valid_loss": best_valid_loss
+                                "valid_loss": best_valid_loss,
                             }
                         )
 
@@ -242,6 +311,7 @@ def main():
                 if meter_loss.avg < best_valid_loss:
                     best_valid_loss = meter_loss.avg
                     torch.save(model.state_dict(), "%s/net_best.pth" % (args.outf))
+
 
 if __name__ == "__main__":
     main()
